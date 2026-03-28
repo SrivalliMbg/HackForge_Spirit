@@ -10,6 +10,7 @@ import { buildFeedbackRecord } from "./server/buildFeedbackRecord.js";
 import { toFeedbacksApiRow } from "./server/feedbackApiShape.js";
 import { buildAnalyticsPayload } from "./server/analytics.js";
 import { getCachedDatasetRows, startFeedbackDatasetWarm } from "./server/feedbackDatasetCache.js";
+import { getCachedExternalRows, startExternalFeedbackWarm } from "./server/externalFeedbackCache.js";
 import { addFeedback, listFeedbacks } from "./server/feedbackStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,8 +32,13 @@ function resolvePort() {
 
 const PORT = resolvePort();
 
-function mergeFeedbacksSorted(liveApiRows, datasetRows) {
-  const merged = [...liveApiRows, ...datasetRows];
+/** Expose JSON dataset rows as source "internal" for API/UI without changing dataset cache internals. */
+function mapDatasetSourceForApi(rows) {
+  return rows.map((r) => (r && r.source === "Dataset" ? { ...r, source: "internal" } : r));
+}
+
+function mergeFeedbacksSorted(liveApiRows, datasetRows, externalRows) {
+  const merged = [...liveApiRows, ...datasetRows, ...externalRows];
   merged.sort((a, b) => (Number(b.sortAt) || 0) - (Number(a.sortAt) || 0));
   return merged;
 }
@@ -47,9 +53,10 @@ app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/feedbacks", (req, res) => {
   try {
-    const dataset = getCachedDatasetRows() ?? [];
+    const internalRows = mapDatasetSourceForApi(getCachedDatasetRows() ?? []);
+    const externalRows = getCachedExternalRows() ?? [];
     const liveRows = listFeedbacks().map((record) => toFeedbacksApiRow(record));
-    const merged = mergeFeedbacksSorted(liveRows, dataset);
+    const merged = mergeFeedbacksSorted(liveRows, internalRows, externalRows);
     const previewRaw = req.query.preview;
     const wantPreview =
       previewRaw !== undefined && previewRaw !== null && String(previewRaw).trim() !== "";
@@ -69,8 +76,9 @@ app.get("/api/feedbacks", (req, res) => {
 app.get("/api/analytics", (req, res) => {
   try {
     const live = listFeedbacks();
-    const dataset = getCachedDatasetRows() ?? [];
-    res.json(buildAnalyticsPayload(live, dataset));
+    const internalRows = mapDatasetSourceForApi(getCachedDatasetRows() ?? []);
+    const externalRows = getCachedExternalRows() ?? [];
+    res.json(buildAnalyticsPayload(live, [...internalRows, ...externalRows]));
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[API] GET /api/analytics failed:", err?.message ?? err);
@@ -115,6 +123,7 @@ const server = http.createServer(app);
 
 server.listen(PORT, () => {
   startFeedbackDatasetWarm();
+  startExternalFeedbackWarm();
   // eslint-disable-next-line no-console
   console.log(`[API] Express server started — listening on http://localhost:${PORT}`);
   // eslint-disable-next-line no-console

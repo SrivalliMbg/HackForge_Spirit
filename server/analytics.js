@@ -35,7 +35,7 @@ function sentimentKey(raw) {
 
 /**
  * @param {object[]} liveRecords - Full records from feedbackStore (buildFeedbackRecord shape)
- * @param {object[]} datasetRows - Cached dataset rows (same shape as GET /api/feedbacks)
+ * @param {object[]} datasetRows - Cached static rows (internal JSON dataset + external Bright Data–style, API shape)
  */
 export function buildAnalyticsPayload(liveRecords, datasetRows) {
   const windowDays = last5DaysIso();
